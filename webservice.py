@@ -1,76 +1,51 @@
 import logging
-logging.basicConfig(level=logging.DEBUG)
-
 from spyne import Application, rpc, ServiceBase, Integer, Unicode, Double
 from spyne import Iterable
 from spyne.protocol.soap import Soap11
 from spyne.error import InvalidInputError
 from spyne.server.wsgi import WsgiApplication
+from model import EuroExchangeRate
 
-rates = {
-    'EUR': 1.0,
-    'USD': 1.1,
-    'GBP': 0.9,
-    'INR': 80.0,
-    'AUD': 1.6,
-    'CAD': 1.5,
-    'SGD': 1.5,
-    'CHF': 1.1,
-    'MYR': 4.5,
-    'JPY': 120.0,
-    'CNY': 7.8,
-    'NZD': 1.7,
-    'THB': 35.0,
-    'HUF': 330.0,
-    'AED': 4.0,
-    'HKD': 8.5,
-    'MXN': 21.0,
-    'ZAR': 16.0,
-    'PHP': 55.0,
-    'SEK': 10.0,
-    'IDR': 16000.0,
-    'SAR': 4.0,
-    'BRL': 4.5,
-    'TRY': 6.0,
-    'KES': 110.0,
-    'KRW': 1300.0,
-    'EGP': 20.0,
-    'IQD': 1300.0,
-    'NOK': 10.0,
-    'KWD': 0.3,
-    'RUB': 70.0,
-    'DKK': 7.5,
-    'PKR': 160.0,
-    'ILS': 4.0,
-    'PLN': 4.0,
-}
+#
+# Demostración de programación de un servicio web SOAP con Spyne.
+#
 
+logging.basicConfig(level=logging.DEBUG)
 
-class HelloWorldService(ServiceBase):
+# Carga de valores desde CSV
+EuroExchangeRate.load_from_csv('eurofxref.csv')
+
+# Clase de servicio SOAP con dos métodos:
+# - currencies: devuelve un iterable con las divisas disponibles
+# - convert_currency: convierte una cantidad de una divisa a otra
+class CurrencyExchangeService(ServiceBase):
+
+    # Método remoto para obtener una lista de divisas.
+    # Devuelve un iterable de cadenas Unicode, que finalmente se serializará en XML.
     @rpc(_returns=Iterable(Unicode))
     def currencies(ctx):
-        for c in rates.keys():
+        for c in EuroExchangeRate.get_currencies():
             yield c
-
-    @rpc(Integer, Integer, _returns=Integer)
-    def multiply(ctx, x, y):
-        return x * y
     
+    # Método remoto para convertir una cantidad de una divisa a otra.
+    # Recibe tres parámetros:
+    # - from_currency: divisa de origen
+    # - to_currency: divisa de destino
+    # - amount: cantidad a convertir
+    # Devuelve un valor Double con el resultado de la conversión, que finalmente se serializará en XML.
     @rpc(Unicode, Unicode, Double, _returns=Double)
     def convert_currency(ctx, from_currency, to_currency, amount):
-        # import requests
-        # url = 'https://api.exchangeratesapi.io/latest?base={}&symbols={}'.format(from_currency, to_currency)
-        # response = requests.get(url)
-        # data = response.json()
-        # return data['rates'][to_currency] * amount
-        if not from_currency in rates:
-            raise InvalidInputError('Currency not supported', from_currency)
-        if not to_currency in rates:
-            raise InvalidInputError('Currency not supported', to_currency)
-        return rates[to_currency]/rates[from_currency] * amount
+        try:
+            from_rate = EuroExchangeRate.get_rate(from_currency)
+            to_rate = EuroExchangeRate.get_rate(to_currency)
+            return to_rate/from_rate * amount
+        except ValueError as e:
+            raise InvalidInputError(e.message, e.args[0])
 
-application = Application([HelloWorldService],
-    tns='spyne.examples.hello',
+
+# Creación de la aplicación SOAP
+application = Application([CurrencyExchangeService],
+    tns='gal.jairochapela.currencyexchange',
     in_protocol=Soap11(validator='lxml'),
     out_protocol=Soap11()
 )
@@ -80,7 +55,6 @@ if __name__ == '__main__':
     # Python's built-in wsgi server but you're not
     # supposed to use it in production.
     from wsgiref.simple_server import make_server
-
     wsgi_app = WsgiApplication(application)
     server = make_server('0.0.0.0', 8000, wsgi_app)
     server.serve_forever()
